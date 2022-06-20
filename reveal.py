@@ -165,8 +165,9 @@ class Reveal:
     def get_available_commands(self):
         available_commands = {}
         if self.connector:
-            available_commands.update(deepcopy(self.CONTEXTS["secundary"]))
             available_commands.update(deepcopy(self.connector.CONTEXTS[self.context]))
+            available_commands.update(deepcopy(self.connector.CONTEXTS["global"]))
+            available_commands.update(deepcopy(self.CONTEXTS["secundary"]))
         available_commands.update(deepcopy(self.CONTEXTS["primary"]))
         return available_commands
 
@@ -195,7 +196,8 @@ class Reveal:
         if command == "help":
             instruction_object.set_available(available_commands)
             instruction_object.set_available(available_shortcuts, False)
-        instruction_object.subject = subject
+        if instruction_object:
+            instruction_object.subject = subject
         return instruction_object
 
     def get_instruction_object(self, command, result_object=None):
@@ -231,9 +233,9 @@ class Reveal:
     def input_handler(self, result_object=None, function=None):
         input_value = input().split(" ")
         #### 2022-06-15
-        if input_value[0].startswith("/"):
-            input_value.insert(1, command[1:])
-            input_value[0] = "/"
+        if input_value[0].startswith("/") and len(input_value[0]) > 1:
+            input_value[0] = input_value[0][1:]
+            input_value.insert(0, "/")
         ####
         command = input_value[0]
         parameter = None if len(input_value) == 1 else " ".join(input_value[1:])
@@ -274,9 +276,12 @@ class Reveal:
             yield self.get_title("HELP")
             for k,v in dict(instruction_object.available_commands).items():
                 shortcut = ""
+                parameterized = ""
                 if k in instruction_object.available_shortcuts:
                     shortcut = f'{instruction_object.available_shortcuts[k]} or '
-                help_option = f'- {shortcut}{k}: {v.description}'
+                if v.parameterized:
+                    parameterized = f' <{v.parameterized}>'
+                help_option = f'- {shortcut}{k}{parameterized}: {v.description}'
                 yield help_option
 
         help = list(generate_help(instruction_object))

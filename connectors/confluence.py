@@ -82,11 +82,13 @@ class ConfluenceConnector(ConnectorModel):
         "global": {
             "search": Instruction(
                 "Search for pages by title and content",
-                "list_search_results"
+                "list_search_results",
+                parameterized="keywords"
             ),
             "cql": Instruction(
                 "Search for pages using Confluence Query Language (CQL)",
-                "list_cql_results"
+                "list_cql_results",
+                parameterized="CQL query"
             )
         },
         "space": {

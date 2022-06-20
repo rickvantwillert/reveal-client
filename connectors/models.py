@@ -13,7 +13,7 @@ class Result():
 
 class Instruction():
 
-    def __init__(self, description, function, context="global", history=True, subject=None, endpoint=None, parameter=None, local=False, title=None):
+    def __init__(self, description, function, context="global", history=True, subject=None, endpoint=None, parameter=None, local=False, title=None, parameterized=None):
         self.description = description
         self.function = function
         self.context = context
@@ -23,6 +23,7 @@ class Instruction():
         self.parameter = parameter
         self.local = local
         self.title = title
+        self.parameterized = parameterized
 
     def set_available(self, available, commands=True):
         if commands:
