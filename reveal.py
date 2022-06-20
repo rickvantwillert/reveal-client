@@ -88,20 +88,24 @@ class Reveal:
                     print(f'ERROR! Please select one of the available options')
                 selected = input()
             return selected
-        print("To which service would you like to connect?")
-        services = self.connectors
-        print("\n".join(self.printer.output_options(services)))
-        selected = connect_handler(services)
-        self.load_connector(self.connectors[int(selected)-1])
-        self.clear_screen()
-        sites = ["New connection"]
-        sites += self.cred.get_credentials_list()
-        print("Which connection would you like to use?")
-        print("\n".join(self.printer.output_options(sites)))
-        selected = connect_handler(sites)
-        self.initiate_connection(int(selected)-1)
-        print("Type menu to show the main menu options")
-        print("Type ? or help for the help menu")
+
+        connected = False
+        while not connected:
+            print("To which service would you like to connect?")
+            services = self.connectors
+            print("\n".join(self.printer.output_options(services)))
+            selected = connect_handler(services)
+            self.load_connector(self.connectors[int(selected)-1])
+            self.clear_screen()
+            sites = ["New connection"]
+            sites += self.cred.get_credentials_list()
+            print("Which connection would you like to use?")
+            print("\n".join(self.printer.output_options(sites)))
+            selected = connect_handler(sites)
+            connected = self.initiate_connection(int(selected)-1)
+            if connected:
+                print("Type menu to show the main menu options")
+                print("Type ? or help for the help menu")
 
     def new_connection(self):
         print("URL:")
@@ -125,7 +129,7 @@ class Reveal:
         site = list(dict(credentials).keys())[option]
         username = dict(credentials)[site]
         secret = self.cred.get_secret(site, username)
-        self.connector.connect(f'https://{site}', username, secret)
+        return self.connector.connect(f'https://{site}', username, secret)
 
     def close(self, ignore=None):
         os._exit(0)

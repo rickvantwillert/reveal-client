@@ -59,7 +59,8 @@ class Credentials():
     def get_credentials_list(self):
         sites = self.get_sites()
         credentials = []
-        for site in sites:
-            credentials.append(f'{site} as {self.get_username(site)}')
+        if sites:
+            for site in sites:
+                credentials.append(f'{site} as {self.get_username(site)}')
         return credentials
 

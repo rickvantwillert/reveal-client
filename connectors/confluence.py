@@ -21,19 +21,24 @@ class ConfluenceConnector(ConnectorModel):
         self.current_user = None
 
     def connect(self, url, username, password):
-        self.url = re.findall(r'.*.atlassian.net', url)[0]
-        self.username = username
-        self.password = password
-        self.confluence = Confluence(
-            url=self.url,
-            username=username,
-            password=password
-        )
-        self.name = f'Confluence ({url})'
-        self.current_user = self.confluence_get(f'{self.url}/wiki/rest/api/user/current')
-        print(f'Connected to {self.name}')
-        print(f'Logged in as user: {self.current_user["displayName"]} ({self.current_user["accountId"]})')
-
+        try:
+            self.url = re.findall(r'.*.atlassian.net', url)[0]
+            self.username = username
+            self.password = password
+            self.confluence = Confluence(
+                url=self.url,
+                username=username,
+                password=password
+            )
+            self.name = f'Confluence ({url})'
+            self.current_user = self.confluence_get(f'{self.url}/wiki/rest/api/user/current')
+            print(f'Connected to {self.name}')
+            print(f'Logged in as user: {self.current_user["displayName"]} ({self.current_user["accountId"]})')
+            return True
+        except:
+            print(f'Could not connect to {self.name}')
+            return False
+    
     MENU = {
         "main": {
             "Pages visited recently": Instruction(

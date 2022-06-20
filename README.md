@@ -18,6 +18,7 @@ Project is created with:
 * Python 3.9.6
 * [html2text](https://pypi.org/project/html2text/)
 * [atlassian-python-api](https://atlassian-python-api.readthedocs.io/)
+* [keyring](https://pypi.org/project/keyring/)
     
 ## Setup
 To install this client, install it locally using git clone and install the
@@ -25,7 +26,7 @@ dependencies using pip:
 
 ```
 $ git clone https://github.com/rickvantwillert/reveal-client.git
-$ python -m pip install html2text,atlassian-python-api
+$ python -m pip install html2text atlassian-python-api keyring
 ```
 
 ## User guide
