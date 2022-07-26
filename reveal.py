@@ -7,7 +7,7 @@ from credentials import Credentials
 
 class Reveal:
 
-    EXCLUDES = ["models", "__init__", "output_printer"]
+    EXCLUDES = ["models", "__init__", "output_printer", "editor"]
 
     CONTEXTS = {
         "secundary": {
@@ -231,35 +231,39 @@ class Reveal:
         return result_object
 
     def input_handler(self, result_object=None, function=None):
-        input_value = input().split(" ")
-        #### 2022-06-15
-        if input_value[0].startswith("/") and len(input_value[0]) > 1:
-            input_value[0] = input_value[0][1:]
-            input_value.insert(0, "/")
-        ####
-        command = input_value[0]
-        parameter = None if len(input_value) == 1 else " ".join(input_value[1:])
-        self.clear_screen()
-        instruction_object = self.get_instruction_object(command, result_object)
-        #### 2022-06-15
-        if result_object and instruction_object.context == "global" and result_object.subject:
-            instruction_object.context = result_object.context
-            instruction_object.subject = result_object.subject
-            # instruction_object.local = False
-        ####
-        result_object = None # reset return object
-        if not instruction_object:
-            instruction_object = self.get_instruction_object("help")
-            print(f"ERROR: Invalid command '{command}'. "
-                + "These are the available commands:")
-        # instruction_object.subject = self.subject # set subject for history
-        result_object = self.execute_instruction_object(instruction_object, parameter)
-        if result_object:
-            if result_object.error:
-                print(f'ERROR! {result_object.error}')
-                result_object = self.go_back(instruction_object)
-            self.input_handler(result_object)
+        answer = input()
+        if answer:
+            input_value = answer.split(" ")
+            #### 2022-06-15
+            if input_value[0].startswith("/") and len(input_value[0]) > 1:
+                input_value[0] = input_value[0][1:]
+                input_value.insert(0, "/")
+            ####
+            command = input_value[0]
+            parameter = None if len(input_value) == 1 else " ".join(input_value[1:])
+            self.clear_screen()
+            instruction_object = self.get_instruction_object(command, result_object)
+            #### 2022-06-15
+            if result_object and instruction_object.context == "global" and result_object.subject:
+                instruction_object.context = result_object.context
+                instruction_object.subject = result_object.subject
+            ####
+            result_object = None # reset return object
+            if not instruction_object:
+                instruction_object = self.get_instruction_object("help")
+                print(f"ERROR: Invalid command '{command}'. "
+                    + "These are the available commands:")
+            # instruction_object.subject = self.subject # set subject for history
+            result_object = self.execute_instruction_object(instruction_object, parameter)
+            if result_object:
+                if result_object.error:
+                    print(f'ERROR! {result_object.error}')
+                    result_object = self.go_back(instruction_object)
+                self.input_handler(result_object)
+            else:
+                self.input_handler()
         else:
+            print("ERROR: Please enter a command. Type ? or help for help")
             self.input_handler()
 
     def get_title(self, title):

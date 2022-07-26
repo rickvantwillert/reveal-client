@@ -3,6 +3,7 @@ import re
 from atlassian import Confluence
 from .models import ConnectorModel, Instruction, Result, Question
 from .output_printer import OutputPrinter
+from .editor import editor
 
 
 def get_connector():
@@ -38,7 +39,9 @@ class ConfluenceConnector(ConnectorModel):
         except:
             print(f'Could not connect to {self.name}')
             return False
-    
+
+    EDITABLE = "editable-by-reveal"
+
     MENU = {
         "main": {
             "Pages visited recently": Instruction(
@@ -121,8 +124,13 @@ class ConfluenceConnector(ConnectorModel):
                 "show_space_menu",
                 "space"
             ),
+            "view": Instruction(
+                "View the current page",
+                "view_page",
+                "page"
+            ),
             "edit": Instruction(
-                "DISABLED! Edit the current page",
+                "Edit the current page",
                 "edit_page",
                 "page"
             ),
@@ -192,6 +200,7 @@ class ConfluenceConnector(ConnectorModel):
         "i": "info",
         "p": "parent",
         "f": "favourite",
+        "v": "view",
         "w": "watch"
     }
 
@@ -268,50 +277,96 @@ class ConfluenceConnector(ConnectorModel):
 
     def show_page(self, instruction_object):
         page = self.get_page_by_id(instruction_object.subject)
-        body = page["body"]["editor2"]["value"]
         print(f'PAGE: {page["title"]}')
-        print(self.printer.output_html2text(body))
+        body = page["body"]["editor2"]["value"]
+        body = self.printer.output_html2text(body)
+        body_lines = body.split("\n")
+        limit = 20
+        if len(body_lines) > limit:
+            print(f'NOTE: Showing first {limit} lines outof {len(body_lines)}. ')
+            if self.is_editable(page):
+                print(f'HINT: Type E or Edit to view and/or edit the entire page')
+            else:
+                print(f'HINT: Type V or View to view the entire page')
+            view_body = "\n".join(body_lines[0:19])
+            print(view_body)
+        else:
+            print(body)
         return Result(page["id"], "page")
     
     def edit_page(self, instruction_object):
-        # TODO: implement
-        print("ERROR: Page editing is disabled!")
-        self.show_page(instruction_object)
-    
-    def create_page(self, instruction_object):
-        title_question = "Page title:"
-        content_question = "Page content:"
-        if instruction_object.parameter:
-            title = None
-            body = ""
-            for question in instruction_object.parameter:
-                if question.summary == title_question:
-                    title = question.answer
-                if question.summary == content_question:
-                    body = question.answer
-            space_key = self.get_page_by_id(instruction_object.subject)["space"]["key"]
-            self.confluence.create_page(
-                space_key,
-                title,
-                body,
-                parent_id=instruction_object.subject,
-                type='page',
-                representation='storage',
-                editor='v2'
-            )
+        page = self.get_page_by_id(instruction_object.subject)
+        if not self.is_editable(page):
+            print("WARNING: This page is marked as being not editable through this client")
         else:
-            return Result(
+            title = page["title"]
+            body = page["body"]["editor2"]["value"]
+            page_before = f'TITLE={title}\n{self.printer.output_html2text(body)}'
+            page_after = editor(text=page_before)
+            if page_before != page_after:
+                self.process_page_update(instruction_object, page_after)
+        return self.show_page(instruction_object)
+
+    def view_page(self, instruction_object):
+        page = self.get_page_by_id(instruction_object.subject)
+        title = page["title"]
+        body = page["body"]["editor2"]["value"]
+        page_before = f'TITLE={title}\n{self.printer.output_html2text(body)}'
+        page_after = editor(text=page_before)
+        if page_before != page_after and self.is_editable(page):
+            print("WARNING: Changes have been made to this page. Type \"save\" to keep changes made.")
+            answer = input().lower()
+            if answer == "save":
+                self.process_page_update(instruction_object, page_after)
+        return self.show_page(instruction_object)
+
+    def process_page_update(self, instruction_object, page_after):
+        new_title = page_after.splitlines()[0].replace("TITLE=", "")
+        new_body = "<br />".join(page_after.splitlines()[1:])
+        try:
+            self.confluence.update_page(
                 instruction_object.subject,
-                "page", 
-                questions=[
-                    Question(title_question, mandatory=True),
-                    Question(content_question, mandatory=True),
-                ]
+                new_title,
+                new_body
             )
+            print("INFO: Page updated successfully")
+        except:
+            print("ERROR: Failed to update page. Check permissions or page restrictions")
+        
+
+    def create_page(self, instruction_object):
+        page = self.get_page_by_id(instruction_object.subject)
+        page_before = "TITLE=PAGE TITLE HERE\nINSERT PAGE CONTENT BELOW THIS LINE! (DO NOT REMOVE!)\n\n"
+        page_after = editor(text=page_before)
+        title = page_after.splitlines()[0].replace("TITLE=", "")
+        body = "<br />".join(page_after.splitlines()[2:])
+        page_id = None
+        if page_after != page_before:
+            try:
+                new_page = self.confluence.create_page(
+                    page["space"]["key"],
+                    title,
+                    body,
+                    parent_id=instruction_object.subject,
+                    type='page',
+                    representation='storage',
+                    editor='v2'
+                )
+                if "id" in new_page:
+                    page_id = new_page["id"]
+                    instruction_object.description = title
+                    instruction_object.subject = page_id
+                    try:
+                        self.confluence.set_page_label(page_id, self.EDITABLE)
+                    except:
+                        pass
+            except:
+                print("ERROR: Failed to create page. Check permissions or title conflicts")
+                print("HINT: First create page with title only, then edit page to add content")
+        return self.show_page(instruction_object)
     
     def add_page_comment(self, instruction_object):
         print("!ERROR: Page commenting is disabled!")
-        self.show_page(instruction_object)
         # if instruction_object.parameter:
         #     for question in instruction_object.parameter:
         #         self.confluence.add_comment(instruction_object.subject, question.answer)
@@ -321,6 +376,7 @@ class ConfluenceConnector(ConnectorModel):
         #         "page",
         #         questions=[Question("Enter your comment:", mandatory=True)]
         #     )
+        return self.show_page(instruction_object)
 
     
     def list_page_comments(self, instruction_object):
@@ -341,7 +397,7 @@ class ConfluenceConnector(ConnectorModel):
     def show_page_info(self, instruction_object):
         # TODO: implement
         print("!ERROR: Not implemented yet")
-        self.show_page(instruction_object)
+        return self.show_page(instruction_object)
     
     def open_parent_page(self, instruction_object):
         page = self.get_page_by_id(instruction_object.subject)
@@ -412,7 +468,7 @@ class ConfluenceConnector(ConnectorModel):
     ### SUPPORTING FUNCTIONS ###
     
     def get_page_by_id(self, page_id):
-        query = f'{self.url}/wiki/rest/api/content/{page_id}?expand=history,space,version,childTypes.page,children.page,ancestors,body.editor2,body.view,metadata.currentuser&trigger=viewed'
+        query = f'{self.url}/wiki/rest/api/content/{page_id}?expand=history,space,version,childTypes.page,children.page,ancestors,body.editor2,body.view,metadata.currentuser,metadata.labels&trigger=viewed'
         response = self.confluence_get(query)
         return response
         # return self.confluence.get_page_by_id(page_id, \
@@ -504,6 +560,18 @@ class ConfluenceConnector(ConnectorModel):
             "personal": personal_spaces
         }
         return result
+
+    def get_page_labels(self, page):
+        labels = []
+        if "metadata" in page:
+            if "labels" in page["metadata"]:
+                if "results" in page["metadata"]["labels"]:
+                    for label in page["metadata"]["labels"]["results"]:
+                        labels.append(label["label"])
+        return labels
+
+    def is_editable(self, page):
+        return self.EDITABLE in self.get_page_labels(page)
 
     def get_date(self, date):
         date_time = date.split("T")
