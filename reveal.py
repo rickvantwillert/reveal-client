@@ -19,6 +19,8 @@ class Reveal:
             "menu": Instruction(
                 "Go to main menu",
                 "show_menu",
+                context="global",
+                subject=None,
                 parameter="main",
                 local=True
             ),
@@ -54,8 +56,6 @@ class Reveal:
         self.history = []
         self.connectors = list(self.get_connectors())
         self.connector = None
-        self.context = "global"
-        self.subject = None
         self.printer = connectors.output_printer.OutputPrinter()
         self.clear_screen()
         self.cred = Credentials()
@@ -142,14 +142,14 @@ class Reveal:
             self.history.append(deepcopy(instruction_object))
 
     def go_back(self, instruction_object, parameter=None):
-        result_object = Result(self.subject)
+        result_object = Result(instruction_object.subject)
         if len(self.history) > 1:
             self.history.pop(-1)
             instruction_object = deepcopy(self.history[-1])
             self.history.pop(-1)
             result_object = self.execute_instruction_object(instruction_object, parameter)
         else:
-            print("History for this session is empty. Main menu:")
+            print("INFO: History for this session is empty. Main menu options:")
             instruction_object = self.get_instruction_object("menu")
             result_object = self.execute_instruction_object(instruction_object, parameter)
         return result_object
@@ -162,10 +162,11 @@ class Reveal:
                 instruction_object = options_list[option]
         return instruction_object
     
-    def get_available_commands(self):
+    def get_available_commands(self, result_object=None):
         available_commands = {}
         if self.connector:
-            available_commands.update(deepcopy(self.connector.CONTEXTS[self.context]))
+            if result_object and result_object.context:
+                available_commands.update(deepcopy(self.connector.CONTEXTS[result_object.context]))
             available_commands.update(deepcopy(self.connector.CONTEXTS["global"]))
             available_commands.update(deepcopy(self.CONTEXTS["secundary"]))
         available_commands.update(deepcopy(self.CONTEXTS["primary"]))
@@ -187,7 +188,7 @@ class Reveal:
             available_shortcuts.update(deepcopy(self.connector.SHORTCUTS))
         return available_shortcuts
 
-    def get_command_instruction(self, command, available_commands, available_shortcuts, subject=None):
+    def get_command_instruction(self, command, available_commands, available_shortcuts, result_object=None):
         instruction_object = None
         if command in available_shortcuts:
             command = available_shortcuts[command]
@@ -196,8 +197,9 @@ class Reveal:
         if command == "help":
             instruction_object.set_available(available_commands)
             instruction_object.set_available(available_shortcuts, False)
-        if instruction_object:
-            instruction_object.subject = subject
+        if instruction_object and result_object and result_object.context != "global":
+            instruction_object.subject = result_object.subject
+            instruction_object.context = result_object.context
         return instruction_object
 
     def get_instruction_object(self, command, result_object=None):
@@ -205,10 +207,10 @@ class Reveal:
         if command.isdigit() and result_object: # option
             instruction_object = self.get_option_instruction(command, result_object.options_list)
         else: # command
-            available_commands = self.get_available_commands()
+            available_commands = self.get_available_commands(result_object)
             available_shortcuts = self.get_available_shortcuts()
             if result_object:
-                instruction_object = self.get_command_instruction(command, available_commands, available_shortcuts, result_object.subject)
+                instruction_object = self.get_command_instruction(command, available_commands, available_shortcuts, result_object)
             else:
                 instruction_object = self.get_command_instruction(command, available_commands, available_shortcuts)
         return instruction_object
@@ -226,34 +228,24 @@ class Reveal:
             if result_object.questions and not result_object.answers:
                 instruction_object.parameter = self.form_handler(result_object.questions)
                 result_object = getattr(self.connector, instruction_object.function)(instruction_object)
-            self.subject = result_object.subject
-            self.context = result_object.context
         return result_object
 
     def input_handler(self, result_object=None, function=None):
         answer = input()
         if answer:
             input_value = answer.split(" ")
-            #### 2022-06-15
             if input_value[0].startswith("/") and len(input_value[0]) > 1:
                 input_value[0] = input_value[0][1:]
                 input_value.insert(0, "/")
-            ####
             command = input_value[0]
             parameter = None if len(input_value) == 1 else " ".join(input_value[1:])
             self.clear_screen()
             instruction_object = self.get_instruction_object(command, result_object)
-            #### 2022-06-15
-            if result_object and instruction_object.context == "global" and result_object.subject:
-                instruction_object.context = result_object.context
-                instruction_object.subject = result_object.subject
-            ####
-            result_object = None # reset return object
             if not instruction_object:
-                instruction_object = self.get_instruction_object("help")
+                instruction_object = self.get_instruction_object("help", result_object)
                 print(f"ERROR: Invalid command '{command}'. "
                     + "These are the available commands:")
-            # instruction_object.subject = self.subject # set subject for history
+            result_object = None
             result_object = self.execute_instruction_object(instruction_object, parameter)
             if result_object:
                 if result_object.error:
@@ -266,18 +258,18 @@ class Reveal:
             print("ERROR: Please enter a command. Type ? or help for help")
             self.input_handler()
 
-    def get_title(self, title):
+    def get_title(self, title, instruction_object):
         title = title.upper()
-        if self.context:
-            title += f' - {self.context.capitalize()}'
-            if self.subject:
-                title += f' ({self.subject})'
+        if instruction_object.context:
+            title += f' - {instruction_object.context.capitalize()}'
+            if instruction_object.subject:
+                title += f' ({instruction_object.subject})'
         return title
 
     def show_help(self, instruction_object, parameter=None):
 
         def generate_help(instruction_object):
-            yield self.get_title("HELP")
+            yield self.get_title("HELP", instruction_object)
             for k,v in dict(instruction_object.available_commands).items():
                 shortcut = ""
                 parameterized = ""

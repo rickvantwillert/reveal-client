@@ -1,5 +1,5 @@
-import requests
-import re
+import requests, re, time
+from datetime import datetime
 from atlassian import Confluence
 from .models import ConnectorModel, Instruction, Result, Question
 from .output_printer import OutputPrinter
@@ -20,6 +20,7 @@ class ConfluenceConnector(ConnectorModel):
         self.username = None
         self.password = None
         self.current_user = None
+        self.system_info = None
 
     def connect(self, url, username, password):
         try:
@@ -33,6 +34,7 @@ class ConfluenceConnector(ConnectorModel):
             )
             self.name = f'Confluence ({url})'
             self.current_user = self.confluence_get(f'{self.url}/wiki/rest/api/user/current')
+            self.system_info = self.confluence_get(f'{self.url}/wiki/rest/api/settings/systemInfo')
             print(f'Connected to {self.name}')
             print(f'Logged in as user: {self.current_user["displayName"]} ({self.current_user["accountId"]})')
             return True
@@ -140,7 +142,7 @@ class ConfluenceConnector(ConnectorModel):
                 "page"
             ),
             "comment": Instruction(
-                "DISABLED! Add a comment to the current page",
+                "Add a comment to the current page",
                 "add_page_comment",
                 "page"
             ),
@@ -150,7 +152,7 @@ class ConfluenceConnector(ConnectorModel):
                 "page"
             ),
             "info":  Instruction(
-                "DISABLED! List page details",
+                "List page details",
                 "show_page_info",
                 "page"
             ),
@@ -211,7 +213,8 @@ class ConfluenceConnector(ConnectorModel):
     
     def list_search_results(self, instruction_object):
         query = instruction_object.parameter
-        instruction_object.parameter = f'title~"{query}" OR text~"{query}" and type=page'
+        clean_query = str(query).replace('"', '')
+        instruction_object.parameter = f'title~"{clean_query}" OR text~"{clean_query}" and type=page'
         print(f'SEARCH RESULTS FOR: {query}')
         result_object = self.list_cql_results(instruction_object, False)
         if len(result_object.options_list) == 0:
@@ -238,10 +241,13 @@ class ConfluenceConnector(ConnectorModel):
             self.print_instruction_objects(instruction_objects)
             result_object.options_list = instruction_objects
         except:
-            if title:
-                print(f'NO RESULTS FOUND! ({cql})')
+            if title and instruction_object.title:
+                print(f'NO RESULTS FOUND for {instruction_object.title.replace(":", "")}')
+                print("HINT: Type . to return to previous screen")
             else:
                 print(f'!INVALID CQL QUERY: {cql}')
+                print("HINT: Validate your query and try again")
+            print("HELP: Type ? or help for the help menu")
         return result_object
     
     def list_all_spaces(self, instruction_object):
@@ -278,7 +284,7 @@ class ConfluenceConnector(ConnectorModel):
     def show_page(self, instruction_object):
         page = self.get_page_by_id(instruction_object.subject)
         print(f'PAGE: {page["title"]}')
-        body = page["body"]["editor2"]["value"]
+        body = self.get_page_body(page)
         body = self.printer.output_html2text(body)
         body_lines = body.split("\n")
         limit = 20
@@ -294,13 +300,17 @@ class ConfluenceConnector(ConnectorModel):
             print(body)
         return Result(page["id"], "page")
     
+    def get_page_body(self, page):
+        body_type = "view" if "error fatal-render-error" in page["body"]["editor2"]["value"] else "editor2"
+        return page["body"][body_type]["value"]
+
     def edit_page(self, instruction_object):
         page = self.get_page_by_id(instruction_object.subject)
         if not self.is_editable(page):
             print("WARNING: This page is marked as being not editable through this client")
         else:
             title = page["title"]
-            body = page["body"]["editor2"]["value"]
+            body = self.get_page_body(page)
             page_before = f'TITLE={title}\n{self.printer.output_html2text(body)}'
             page_after = editor(text=page_before)
             if page_before != page_after:
@@ -310,7 +320,7 @@ class ConfluenceConnector(ConnectorModel):
     def view_page(self, instruction_object):
         page = self.get_page_by_id(instruction_object.subject)
         title = page["title"]
-        body = page["body"]["editor2"]["value"]
+        body = self.get_page_body(page)
         page_before = f'TITLE={title}\n{self.printer.output_html2text(body)}'
         page_after = editor(text=page_before)
         if page_before != page_after and self.is_editable(page):
@@ -366,17 +376,20 @@ class ConfluenceConnector(ConnectorModel):
         return self.show_page(instruction_object)
     
     def add_page_comment(self, instruction_object):
-        print("!ERROR: Page commenting is disabled!")
-        # if instruction_object.parameter:
-        #     for question in instruction_object.parameter:
-        #         self.confluence.add_comment(instruction_object.subject, question.answer)
-        # else:
-        #     return Result(
-        #         instruction_object.subject,
-        #         "page",
-        #         questions=[Question("Enter your comment:", mandatory=True)]
-        #     )
-        return self.show_page(instruction_object)
+        if instruction_object.parameter:
+            for question in instruction_object.parameter:
+                try:
+                    self.confluence.add_comment(instruction_object.subject, question.answer)
+                    print("INFO: Comment added successfully!")
+                except:
+                    print("ERROR: Failed to add comment. Check your permissions")
+        else:
+            return Result(
+                instruction_object.subject,
+                "page",
+                questions=[Question("Enter your comment:", mandatory=True)]
+            )
+        return self.list_page_comments(instruction_object)
 
     
     def list_page_comments(self, instruction_object):
@@ -384,20 +397,36 @@ class ConfluenceConnector(ConnectorModel):
         response = self.confluence_get(query)
         if response["results"]:
             comments = response["results"][::-1]
-            print(f'COMMENTS FOR PAGE:')
+            print(f'COMMENTS FOR PAGE (latest first):')
             for comment in comments:
                 print(f'COMMENT BY {comment["history"]["createdBy"]["displayName"]} ON {self.get_date(comment["history"]["createdDate"])}:')
-                print(self.printer.output_html2text(comment["body"]["editor2"]["value"]) + "\n")
-                return Result(instruction_object.subject, "page")
+                print(self.printer.output_html2text(comment["body"]["editor2"]["value"]))
+            return Result(instruction_object.subject, "page")
         else:
-            print("NOTICE: Page doesn't have comments")
+            print("INFO: Page doesn't have comments")
             instruction_object.parameter = instruction_object.subject
             return self.show_page(instruction_object)
     
     def show_page_info(self, instruction_object):
-        # TODO: implement
-        print("!ERROR: Not implemented yet")
-        return self.show_page(instruction_object)
+        page = self.get_page_by_id(instruction_object.subject)
+        print(f'Title: {page["title"]}')
+        print(f'Page ID: {page["id"]}')
+        print(f'Version: {page["version"]["number"]}')
+        print(f'Last changed: {self.get_date(page["version"]["when"])}')
+        print(f'Last changed by: {page["version"]["by"]["publicName"]} ({page["version"]["by"]["displayName"]})')
+        print(f'Created on: {self.get_date(page["history"]["createdDate"])}')
+        print(f'Created by: {page["history"]["createdBy"]["publicName"]} ({page["history"]["createdBy"]["displayName"]})')
+        labels = self.get_page_labels(page)
+        if labels:
+            print(f'Labels: {", ".join(labels)}')
+        print(f'Space: {page["space"]["name"]} ({page["space"]["key"]})')
+        if page["ancestors"]:
+            print(f'Parent page: {page["ancestors"][-1]["title"]}')
+        print(f'Tiny link: {self.url}{page["_links"]["tinyui"]}')
+        print(f'Page has attachments: {page["childTypes"]["attachment"]["value"]}')
+        print(f'Page has comments: {page["childTypes"]["comment"]["value"]}')
+        print(f'Page has children: {page["childTypes"]["page"]["value"]}')
+        return Result(instruction_object.subject, "page")
     
     def open_parent_page(self, instruction_object):
         page = self.get_page_by_id(instruction_object.subject)
@@ -405,7 +434,7 @@ class ConfluenceConnector(ConnectorModel):
             parent_page = page["ancestors"][-1]
             instruction_object.subject = parent_page["id"]
         else:
-            print("NOTICE: This page doesn't have a parent")
+            print("INFO: This page doesn't have a parent")
         return self.show_page(instruction_object)
     
     def list_children_pages(self, instruction_object, title=True):
@@ -417,7 +446,8 @@ class ConfluenceConnector(ConnectorModel):
             self.print_instruction_objects(page_children)
             return Result(instruction_object.subject, "page", page_children)
         else:
-            return Result(instruction_object.subject, "page", error="This page doesn't have children pages.")
+            print("INFO: This page doesn't have any children")
+        return self.show_page(instruction_object)
     
     def list_sibling_pages(self, instruction_object):
         page = self.get_page_by_id(instruction_object.subject)
@@ -428,7 +458,7 @@ class ConfluenceConnector(ConnectorModel):
             instruction_object.subject = parent_page["id"]
             return self.list_children_pages(instruction_object, False)
         else:
-            print("NOTICE: This page doesn't have sibling pages.")
+            print("INFO: This page doesn't have sibling pages.")
         return self.show_page(instruction_object)
         
     def toggle_relation(self, instruction_object):
@@ -468,11 +498,9 @@ class ConfluenceConnector(ConnectorModel):
     ### SUPPORTING FUNCTIONS ###
     
     def get_page_by_id(self, page_id):
-        query = f'{self.url}/wiki/rest/api/content/{page_id}?expand=history,space,version,childTypes.page,children.page,ancestors,body.editor2,body.view,metadata.currentuser,metadata.labels&trigger=viewed'
+        query = f'{self.url}/wiki/rest/api/content/{page_id}?expand=history,space,version,childTypes.all,children.page,ancestors,body.editor2,body.view,metadata.currentuser,metadata.labels&trigger=viewed'
         response = self.confluence_get(query)
         return response
-        # return self.confluence.get_page_by_id(page_id, \
-        #     expand="history,space,version,childTypes.page,children.page,ancestors,body.editor2,body.view,metadata.currentuser&trigger=viewed")
 
     def get_space(self, space_key):
         return self.confluence.get_space(space_key, expand='homepage')
@@ -574,9 +602,17 @@ class ConfluenceConnector(ConnectorModel):
         return self.EDITABLE in self.get_page_labels(page)
 
     def get_date(self, date):
-        date_time = date.split("T")
-        hour_min = date_time[1].split(":")
-        return f'{date_time[0]} @ {hour_min[0]}:{hour_min[1]}'
+
+        def datetime_from_utc_to_local(utc_datetime):
+            now_timestamp = time.time()
+            offset = datetime.fromtimestamp(now_timestamp) - datetime.utcfromtimestamp(now_timestamp)
+            return utc_datetime + offset
+
+        date = date.split("Z")[0]
+        date = date.split(".")[0]
+        date_time = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S")
+        local_date_time = datetime_from_utc_to_local(date_time)
+        return local_date_time.strftime("%c")
 
     def print_instruction_objects(self, instruction_objects):
         options = [instruction_object.description for instruction_object in instruction_objects]
@@ -617,12 +653,3 @@ class ConfluenceConnector(ConnectorModel):
         except Exception as e:
             print(e)
             return None
-
-# test = ConfluenceConnector()
-# test.connect("https://tmcalm.atlassian.net", "rick.van.twillert@tmc.nl", "")
-
-# instruction_object = Instruction("","","page",subject="1869971485",parameter="1869971485")
-
-# # test.list_space_pages(instruction_object)
-# test.open_parent_page(instruction_object)
-# # test.list_page_comments(instruction_object)
